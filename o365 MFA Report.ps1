@@ -1,3 +1,7 @@
+<# Generates a HTML table of Office 365 users accounts and their Multi Factor Authentication status
+https://docs.microsoft.com/en-us/azure/active-directory/authentication/howto-mfa-userstates
+#>
+
 #Requires -Modules 'MSOnline'
 $ErrorActionPreference = 'Stop'
 
@@ -43,8 +47,13 @@ ForEach ($userMSOL in $allMSOL) {
 [string]$htmlSummary = "
 <PRE>
 Time                 : $((Get-Date).DateTime)
-MFA Enabled          : $(($tableSummary | Where-Object -FilterScript {![string]::IsNullOrWhiteSpace($PSItem.DefaultStrongAuthenticationMethodType)}).Count)
-MFA Disabled         : $(($tableSummary | Where-Object -FilterScript {[string]::IsNullOrWhiteSpace($PSItem.DefaultStrongAuthenticationMethodType)}).Count)
+
+MFA Not Configured   : $(($tableSummary | Where-Object -FilterScript {[string]::IsNullOrWhiteSpace($PSItem.DefaultStrongAuthenticationMethodType)}).Count)
+MFA Configured       : $(($tableSummary | Where-Object -FilterScript {![string]::IsNullOrWhiteSpace($PSItem.DefaultStrongAuthenticationMethodType)}).Count)
+
+MFA Enabled          : $(($tableSummary | Where-Object -FilterScript {$PSItem.MFAState -eq 'Enabled'}).Count)
+MFA Enforced         : $(($tableSummary | Where-Object -FilterScript {$PSItem.MFAState -eq 'Enforced'}).Count)
+
 OneWaySMS            : $(($tableSummary | Where-Object -FilterScript {$PSItem.DefaultStrongAuthenticationMethodType -eq 'OneWaySMS'}).Count)
 PhoneAppNotification : $(($tableSummary | Where-Object -FilterScript {$PSItem.DefaultStrongAuthenticationMethodType -eq 'PhoneAppNotification'}).Count)
 PhoneAppOTP          : $(($tableSummary | Where-Object -FilterScript {$PSItem.DefaultStrongAuthenticationMethodType -eq 'PhoneAppOTP'}).Count)
@@ -57,8 +66,49 @@ $tableSummary | Sort-Object -Property ('Office', 'Department', 'DisplayName') |
   Out-File -FilePath $OutputFilePath -Force -Encoding utf8
 
 
-# to do
-# if DefaultStrongAuthenticationMethodType ne $null; enforce MFA
-# https://docs.microsoft.com/en-us/azure/active-directory/authentication/howto-mfa-userstates
+<# examples
+
+$authEnabled = New-Object -TypeName Microsoft.Online.Administration.StrongAuthenticationRequirement
+$authEnabled.RelyingParty                   = '*'
+$authEnabled.State                          = 'Enabled'
+$authEnabled.RememberDevicesNotIssuedBefore = (Get-Date)
+
+$authEnforced = New-Object -TypeName Microsoft.Online.Administration.StrongAuthenticationRequirement
+$authEnforced.RelyingParty                   = '*'
+$authEnforced.State                          = 'Enforced'
+$authEnforced.RememberDevicesNotIssuedBefore = (Get-Date)
+
+Set-MsolUser -UserPrincipalName 'blah.blah@your.o365' -StrongAuthenticationRequirements $authEnforced
 
 
+
+# default MFA method defined, but neither enabled nor enforced
+$tableSummary | Where-Object -FilterScript {![string]::IsNullOrWhiteSpace($PSItem.DefaultStrongAuthenticationMethodType) -and [string]::IsNullOrWhiteSpace($PSItem.MFAState)} | Format-Table -AutoSize
+
+$tableSummary | Where-Object -FilterScript {$PSItem.MFAState -eq 'Enabled'} | Format-Table -AutoSize
+$tableSummary | Where-Object -FilterScript {$PSItem.MFAState -eq 'Enforced'} | Format-Table -AutoSize
+
+
+
+# "Enforce" the "configured" accounts
+$UsersToEnforce = $tableSummary | Where-Object -FilterScript {
+    ![string]::IsNullOrWhiteSpace($PSItem.DefaultStrongAuthenticationMethodType) -and
+    $PSItem.MFAState -ne 'Enforced'
+}
+
+If ($UsersToEnforce.Count -eq 0) {
+    Write-Host 'None to enforce'
+} Else {
+    Write-Host 'Enforcing MFA on the the following accounts'
+
+    $authEnforced = New-Object -TypeName Microsoft.Online.Administration.StrongAuthenticationRequirement
+    $authEnforced.RelyingParty                   = '*'
+    $authEnforced.State                          = 'Enforced'
+    $authEnforced.RememberDevicesNotIssuedBefore = (Get-Date)
+
+    foreach ($user in $UsersToEnforce) {
+        Write-Host $user.UPN
+        Set-MsolUser -UserPrincipalName $user.UPN -StrongAuthenticationRequirements $authEnforced
+    }
+}
+#>
